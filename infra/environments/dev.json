@@ -3,7 +3,9 @@
     "EnvironmentName": "dev",
     "InstanceType": "t3.micro",
     "WebVolumeSize": "20",
-    "DBVolumeSize": "20",
-    "DBPassword": "DevSecretPassword123!"
+    "DBVolumeSize": "30",
+    "DBPassword": "DevSecretDBPass123!",
+    "DomainName": "png261.dev",
+    "SubdomainName": "opt3-dev.png261.dev"
   }
 }
