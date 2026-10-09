@@ -3,7 +3,9 @@
     "EnvironmentName": "prod",
     "InstanceType": "t3.small",
     "WebVolumeSize": "30",
-    "DBVolumeSize": "40",
-    "DBPassword": "ProdMasterPasswordSecure2026!"
+    "DBVolumeSize": "50",
+    "DBPassword": "ProdSecretDBPass123!Secure",
+    "DomainName": "png261.dev",
+    "SubdomainName": "opt3.png261.dev"
   }
 }
