@@ -86,7 +86,6 @@ Resources:
 
   WebServerInstance:
     Type: AWS::EC2::Instance
-    DependsOn: DBServerInstance
     Properties:
       InstanceType: !Ref InstanceType
       ImageId: !Ref LatestAmiId
