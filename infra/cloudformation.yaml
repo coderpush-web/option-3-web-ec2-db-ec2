@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Application Compute Module: Option 3 - Web on EC2 + DB on EC2'
+Description: 'Application Compute Module: Option 3 - Web on EC2 (Docker from ECR) + Dedicated Database on EC2'
 
 Parameters:
   EnvironmentName:
@@ -10,7 +10,6 @@ Parameters:
   InstanceType:
     Type: String
     Default: t3.micro
-    Description: Instance type for Web & DB (t3.micro for dev, t3.small for prod)
 
   WebVolumeSize:
     Type: Number
@@ -29,15 +28,17 @@ Parameters:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
 
+  ImageTag:
+    Type: String
+    Default: latest
+
   DomainName:
     Type: String
     Default: png261.dev
-    Description: Root domain name
 
   SubdomainName:
     Type: String
     Default: opt3-dev.png261.dev
-    Description: Subdomain for this environment (e.g. opt3-dev.png261.dev or opt3.png261.dev)
 
 Resources:
   DBServerInstance:
@@ -61,6 +62,7 @@ Resources:
         Fn::Base64: !Sub
           - |
             #!/bin/bash
+            set -e
             dnf update -y
             dnf install -y mariadb105-server
 
@@ -72,6 +74,9 @@ Resources:
             mysql -e "CREATE USER IF NOT EXISTS 'appuser'@'%' IDENTIFIED BY '${Password}';"
             mysql -e "GRANT ALL PRIVILEGES ON appdb.* TO 'appuser'@'%';"
             mysql -e "FLUSH PRIVILEGES;"
+
+            mysql -u appuser -p'${Password}' appdb -e "CREATE TABLE IF NOT EXISTS system_logs (id INT AUTO_INCREMENT PRIMARY KEY, service VARCHAR(50), message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+            mysql -u appuser -p'${Password}' appdb -e "INSERT INTO system_logs (service, message) VALUES ('Database', 'Database Initialized on Dedicated EC2 Instance');"
           - Password: !Ref DBPassword
       Tags:
         - Key: Name
@@ -81,6 +86,7 @@ Resources:
 
   WebServerInstance:
     Type: AWS::EC2::Instance
+    DependsOn: DBServerInstance
     Properties:
       InstanceType: !Ref InstanceType
       ImageId: !Ref LatestAmiId
@@ -100,87 +106,52 @@ Resources:
         Fn::Base64: !Sub
           - |
             #!/bin/bash
+            set -e
             dnf update -y
-            dnf install -y nodejs npm
+            dnf install -y docker aws-cli
+            systemctl enable docker
+            systemctl start docker
+            usermod -aG docker ec2-user
 
-            mkdir -p /opt/app
-            cat << 'EOF' > /opt/app/package.json
-            {
-              "name": "sample-web-app",
-              "version": "1.0.0",
-              "main": "server.js",
-              "dependencies": {
-                "express": "^4.19.2",
-                "mysql2": "^3.9.7"
-              }
-            }
-            EOF
+            AWS_REGION="${AWS::Region}"
+            ACCOUNT_ID="${AWS::AccountId}"
+            IMAGE_URI="${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvironmentName}-option-3-web-app:${ImageTag}"
 
-            cat << 'EOF' > /opt/app/server.js
-            const express = require('express');
-            const mysql = require('mysql2/promise');
-            const app = express();
-            const port = 80;
+            echo "Logging into Amazon ECR..."
+            aws ecr get-login-password --region "${AWS::Region}" | docker login --username AWS --password-stdin "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com" || true
 
-            const pool = mysql.createPool({
-              host: process.env.DB_HOST,
-              user: process.env.DB_USER || 'appuser',
-              password: process.env.DB_PASSWORD,
-              database: process.env.DB_NAME || 'appdb',
-              waitForConnections: true,
-              connectionLimit: 5
-            });
+            echo "Pulling Docker image: $IMAGE_URI"
+            docker pull "$IMAGE_URI" || true
 
-            app.get('/health', (req, res) => res.json({ status: 'ok', env: '${EnvTag}' }));
-            app.get('/', async (req, res) => {
-              let dbStatus = 'Checking...';
-              try {
-                const [rows] = await pool.query('SELECT 1 + 1 AS solution, NOW() as current_time');
-                dbStatus = `Connected OK (Result: ` + rows[0].solution + `, Time: ` + rows[0].current_time + `)`;
-              } catch (err) {
-                dbStatus = 'Failed: ' + err.message;
-              }
-              res.send(`
-                <!DOCTYPE html><html><body style="font-family:sans-serif;background:#f4f6f8;padding:40px;">
-                <div style="background:white;padding:24px;border-radius:8px;max-width:600px;margin:0 auto;box-shadow:0 4px 6px rgba(0,0,0,0.1)">
-                  <h1 style="color:#ff9900;">🚀 Option 3: 2 EC2 Instances (${EnvTag})</h1>
-                  <p><strong>DB Connection:</strong> ` + dbStatus + `</p>
-                  <p><strong>DB Host:</strong> ${DBIp}</p>
-                  <p><strong>Environment:</strong> ${EnvTag}</p>
-                </div></body></html>
-              `);
-            });
-            app.listen(port, () => console.log('Listening on port ' + port));
-            EOF
-
-            cd /opt/app
-            npm install
-
-            cat << EOF > /etc/systemd/system/webapp.service
+            cat << 'SVC' > /etc/systemd/system/react-webapp.service
             [Unit]
-            Description=Web App Service
-            After=network.target
+            Description=Dockerized React Web App connected to EC2 MariaDB
+            After=docker.service
+            Requires=docker.service
 
             [Service]
-            Type=simple
-            User=root
-            WorkingDirectory=/opt/app
-            Environment=DB_HOST=${DBIp}
-            Environment=DB_USER=appuser
-            Environment=DB_PASSWORD=${Password}
-            Environment=DB_NAME=appdb
-            ExecStart=/usr/bin/node /opt/app/server.js
+            TimeoutStartSec=0
             Restart=always
+            ExecStartPre=-/usr/bin/docker stop react-webapp
+            ExecStartPre=-/usr/bin/docker rm react-webapp
+            ExecStart=/usr/bin/docker run --name react-webapp -p 80:80 \
+              -e APP_ENV=${EnvironmentName} \
+              -e PORT=80 \
+              -e DB_HOST=${DBPrivateIp} \
+              -e DB_USER=appuser \
+              -e DB_PASSWORD=${Password} \
+              -e DB_NAME=appdb \
+              ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvironmentName}-option-3-web-app:${ImageTag}
+            ExecStop=/usr/bin/docker stop react-webapp
 
             [Install]
             WantedBy=multi-user.target
-            EOF
+            SVC
 
             systemctl daemon-reload
-            systemctl enable webapp
-            systemctl start webapp
-          - EnvTag: !Ref EnvironmentName
-            DBIp: !GetAtt DBServerInstance.PrivateIp
+            systemctl enable react-webapp
+            systemctl start react-webapp || true
+          - DBPrivateIp: !GetAtt DBServerInstance.PrivateIp
             Password: !Ref DBPassword
       Tags:
         - Key: Name
@@ -203,11 +174,11 @@ Outputs:
   WebsiteURL:
     Description: Website URL
     Value: !Sub 'http://${WebServerEIP.PublicIp}'
-  WebPublicIP:
-    Description: Public IP of Web Server
+  PublicIP:
+    Description: Elastic IP
     Value: !Ref WebServerEIP
-  DBPrivateIP:
-    Description: Private IP of Database Server
+  DatabasePrivateIP:
+    Description: Private IP of DB Server EC2
     Value: !GetAtt DBServerInstance.PrivateIp
   CustomDomainURL:
     Description: Custom Domain Website URL (png261.dev)
