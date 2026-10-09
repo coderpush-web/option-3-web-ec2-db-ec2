@@ -1,0 +1,9 @@
+{
+  "Parameters": {
+    "EnvironmentName": "dev",
+    "InstanceType": "t3.micro",
+    "WebVolumeSize": "20",
+    "DBVolumeSize": "20",
+    "DBPassword": "DevSecretPassword123!"
+  }
+}
