@@ -4,7 +4,6 @@
     "InstanceType": "t3.small",
     "WebVolumeSize": "30",
     "DBVolumeSize": "50",
-    "DBPassword": "ProdSecretDBPass123!Secure",
     "SubdomainName": "opt3.png261.dev",
     "MinInstances": "2",
     "MaxInstances": "6",

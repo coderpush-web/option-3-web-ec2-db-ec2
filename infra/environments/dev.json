@@ -4,7 +4,6 @@
     "InstanceType": "t3.micro",
     "WebVolumeSize": "20",
     "DBVolumeSize": "30",
-    "DBPassword": "DevSecretDBPass123!",
     "SubdomainName": "opt3-dev.png261.dev",
     "MinInstances": "1",
     "MaxInstances": "2",
