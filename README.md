@@ -34,9 +34,15 @@ No costed resources detected.
 ```
 <!-- INFRACOST_END -->
 
-## 3. Kiến trúc Hạ tầng (Architecture Diagram)
+### 3. Kiến trúc Hạ tầng (Architecture Diagram)
 ![Architecture](infra/architecture_diagram.png)
 
+### Điểm nổi bật của kiến trúc:
+- **CloudFront CDN Edge Caching:** Caching tối ưu cho static assets (`/_next/static/*`, `/static/*`), giảm tải 80-90% lượng request vào cụm máy chủ gốc, cải thiện TTFB và tăng tốc độ tải trang toàn cầu.
+- **Application Load Balancer (ALB):** Nằm tại Public Subnets (Multi-AZ), cân bằng tải lưu lượng truy cập HTTP/HTTPS vào các EC2 instances trong Auto Scaling Group.
+- **Web Auto Scaling Group (ASG):** Nằm an toàn trong **Private Subnets (AZ1 & AZ2)**, tự động scale số lượng EC2 instances dựa theo ngưỡng CPU utilization (70%).
+- **Dedicated MariaDB EC2:** Đặt trong **Private Subnet**, chỉ cho phép truy cập cổng 3306 từ Security Group của Web Tier.
+- **Cloudflare Proxy + Custom Domain:** Định tuyến người dùng qua Cloudflare CDN/WAF tới CloudFront / ALB endpoint.
 
 ## 📸 Giao Diện Ứng Dụng Thực Tế (Live Screenshots - Dev & Prod)
 
@@ -45,15 +51,15 @@ No costed resources detected.
 | ![Development Environment](screenshots/dev_screenshot.png) | ![Production Environment](screenshots/prod_screenshot.png) |
 
 > 🚀 **Ghi chú triển khai:**
-> - **Môi trường Dev (`opt3-dev.png261.dev`):** Chạy chế độ debug/development, kết nối cơ sở dữ liệu Dev, phục vụ kiểm thử tính năng mới.
-> - **Môi trường Prod (`opt3.png261.dev`):** Chạy chế độ production tối ưu hóa hiệu năng cao, bảo mật nghiêm ngặt qua Cloudflare SSL/HTTPS.
+> - **Môi trường Dev (`opt3-dev.png261.dev`):** Chạy chế độ debug/development, Auto Scaling Min 1 - Max 2 instance.
+> - **Môi trường Prod (`opt3.png261.dev`):** Chạy chế độ production tối ưu hóa hiệu năng cao, Auto Scaling Min 2 - Max 6 instances, bảo mật nghiêm ngặt qua Cloudflare SSL/HTTPS.
 
 
 ## ⚛️ Ứng Dụng React & Quy Trình Đóng Gói Docker / Amazon ECR
 
 ### 1. Kiến trúc Ứng dụng Web
 - **Tên ứng dụng:** **ClusterMesh 2-Tier VPC Architecture Portal**
-- **Mô tả:** Cổng giám sát cấu trúc VPC 2 tầng tách biệt Web EC2 (Public Subnet) và Database MariaDB EC2 (Private Subnet). Giao diện React hiển thị trực quan luồng traffic qua Security Group.
+- **Mô tả:** Cổng giám sát cấu trúc VPC 2 tầng tách biệt Web EC2 (Private Subnets) và Database MariaDB EC2 (Private Subnet). Giao diện React hiển thị trực quan luồng traffic qua Security Group.
 - **Công nghệ Frontend:** React 18, Vite, Lucide Icons, Modern CSS Grid & Flexbox.
 - **Backend & API:** Node.js Express phục vụ REST API và Single Page Application (SPA).
 - **Cơ sở dữ liệu:** Dedicated MariaDB 10.5 chạy trên EC2 độc lập trong Private Subnet.
@@ -79,12 +85,12 @@ Quy trình tuân thủ nghiêm ngặt chuẩn DevOps hiện đại:
 Hạ tầng hỗ trợ ánh xạ tên miền `png261.dev` cho cả môi trường Development và Production:
 
 | Môi trường | Nhánh Git | Subdomain | Loại bản ghi DNS | Giá trị đích (Target) | Proxy Cloudflare |
-| :--- | :--- | :--- | :---: | :--- | :---: |
-| **Development** | `dev` | `opt3-dev.png261.dev` | `A` | `${WebServerEIP.PublicIp}` (Dev EIP) | Bật (Proxied ☁️) |
-| **Production** | `main` | `opt3.png261.dev` | `A` | `${WebServerEIP.PublicIp}` (Prod EIP) | Bật (Proxied ☁️) |
+| :--- | :--- | :--- | :---: | :--- | :--- |
+| **Development** | `dev` | `opt3-dev.png261.dev` | `CNAME` | `${CloudFrontDistribution.DomainName}` / ALB DNS | Bật (Proxied ☁️) |
+| **Production** | `main` | `opt3.png261.dev` | `CNAME` | `${CloudFrontDistribution.DomainName}` / ALB DNS | Bật (Proxied ☁️) |
 
 > 💡 **Khuyến nghị SSL/HTTPS qua Cloudflare:**
-> Do tên miền `png261.dev` được quản trị Nameserver tại Cloudflare, khi tạo bản ghi `A` với trạng thái **Proxied (Đám mây màu cam ☁️)**:
+> Do tên miền `png261.dev` được quản trị Nameserver tại Cloudflare, khi tạo bản ghi `CNAME` với trạng thái **Proxied (Đám mây màu cam ☁️)**:
 > - Cloudflare sẽ tự động cấp chứng chỉ **Universal SSL/TLS miễn phí** (HTTPS xanh).
 > - Tự động kích hoạt CDN caching và bảo vệ chống tấn công DDoS Lớp 7.
 
