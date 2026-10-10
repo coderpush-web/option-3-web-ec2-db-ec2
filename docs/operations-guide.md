@@ -32,16 +32,18 @@ node test/test_api.js
 
 ---
 
-## 2. Dedicated Database Operations (MariaDB / MySQL on EC2)
+## 2. Dedicated Database Operations (PostgreSQL 16 on EC2)
 
-In Option 3, the database runs on a dedicated EC2 instance located in a Private Subnet.
+In Option 3, the database runs on a dedicated EC2 instance located in a Private Subnet running PostgreSQL 16.
 
 ### Database Credentials & Access Details:
-- **Port:** `3306`
+- **Port:** `5432`
 - **Default Database:** `appdb`
 - **Application User:** `appuser`
-- **Password:** Defined in `environments/dev.json` or `prod.json` (`DBPassword`)
+- **Password:** Managed in AWS Secrets Manager (`${EnvironmentName}-ec2-postgres-credentials`)
 - **Internal Host:** Private IP address of the `${EnvironmentName}-db-server` instance.
+- **Service Name:** `postgresql` (PostgreSQL 16 on Amazon Linux 2023)
+- **Data Directory:** `/var/lib/pgsql/data`
 
 ### Connecting to the Database Server via AWS Systems Manager:
 ```bash
@@ -54,19 +56,50 @@ DB_INSTANCE_ID=$(aws ec2 describe-instances \
 # 2. Open an SSM session to the DB host
 aws ssm start-session --target "$DB_INSTANCE_ID"
 
-# 3. Log in to MariaDB/MySQL locally on the host
-mysql -u root
-# or
-mysql -u appuser -p appdb
+# 3. Log in to PostgreSQL locally on the host
+sudo -u postgres psql -d appdb
+# or authenticate as the application user:
+psql -h 127.0.0.1 -p 5432 -U appuser -d appdb
 ```
 
-### Performing Database Backups (`mysqldump`):
+### Performing Database Backups (`pg_dump`):
 ```bash
 # Execute within the DB instance SSM shell:
-mysqldump -u appuser -p'YourPassword' appdb > /tmp/appdb_backup_$(date +%F).sql
+# 1. Create a logical backup in custom compressed format (recommended):
+pg_dump -h 127.0.0.1 -p 5432 -U appuser -d appdb -F c -b -v -f /tmp/appdb_backup_$(date +%F).dump
 
-# Verify backup size
-ls -lh /tmp/appdb_backup_*.sql
+# 2. Alternatively, create a plain-text SQL backup:
+pg_dump -h 127.0.0.1 -p 5432 -U appuser -d appdb --clean --if-exists > /tmp/appdb_backup_$(date +%F).sql
+
+# 3. Verify backup size
+ls -lh /tmp/appdb_backup_*
+```
+
+### Restoring Database from Backup (`pg_restore` / `psql`):
+```bash
+# 1. Restore from custom compressed format dump:
+pg_restore -h 127.0.0.1 -p 5432 -U appuser -d appdb -v --clean --if-exists /tmp/appdb_backup_YYYY-MM-DD.dump
+
+# 2. Restore from plain-text SQL file:
+psql -h 127.0.0.1 -p 5432 -U appuser -d appdb -f /tmp/appdb_backup_YYYY-MM-DD.sql
+```
+
+### Routine PostgreSQL 16 Maintenance & Service Management:
+```bash
+# 1. Check PostgreSQL service status
+sudo systemctl status postgresql
+
+# 2. Reload configuration (after postgresql.conf or pg_hba.conf edits)
+sudo systemctl reload postgresql
+
+# 3. Restart PostgreSQL service
+sudo systemctl restart postgresql
+
+# 4. Routine database vacuuming and statistics update
+vacuumdb -h 127.0.0.1 -p 5432 -U appuser -d appdb --analyze --verbose
+
+# 5. Check active client connections
+sudo -u postgres psql -d appdb -c "SELECT pid, usename, client_addr, state, query FROM pg_stat_activity WHERE datname = 'appdb';"
 ```
 
 ---
@@ -95,8 +128,8 @@ sudo docker ps
 # View container runtime logs
 sudo docker logs -f $(sudo docker ps -q)
 
-# Test connectivity from Web to DB instance on port 3306
-nc -zv <DB_PRIVATE_IP> 3306
+# Test connectivity from Web to DB instance on port 5432
+nc -zv <DB_PRIVATE_IP> 5432
 ```
 
 ---
@@ -125,11 +158,11 @@ All alarms publish directly to the **Amazon SNS Topic** (`${EnvironmentName}-ops
 ## 5. Troubleshooting & Frequently Encountered Issues
 
 ### Issue 1: Web Application Cannot Connect to Database (`ECONNREFUSED` or Timeout)
-- **Cause:** Security Group mismatch, MariaDB service stopped, or bind address issue.
+- **Cause:** Security Group mismatch, PostgreSQL service stopped, or listen address issue.
 - **Remediation:**
-  1. Verify the DB Security Group allows inbound port 3306 from the Web Security Group.
-  2. Start an SSM session to the DB instance and verify service state: `sudo systemctl status mariadb`.
-  3. Ensure MariaDB binds to all interfaces: check `/etc/my.cnf.d/mariadb-server.cnf` has `bind-address = 0.0.0.0`.
+  1. Verify the DB Security Group allows inbound port 5432 from the Web Security Group.
+  2. Start an SSM session to the DB instance and verify service state: `sudo systemctl status postgresql`.
+  3. Ensure PostgreSQL listens on all interfaces: check `/var/lib/pgsql/data/postgresql.conf` has `listen_addresses = '*'`.
 
 ### Issue 2: Web ASG Instance Refresh Fails or Hangs
 - **Cause:** New instances fail ALB target group health checks on `/api/health`.
@@ -141,8 +174,8 @@ All alarms publish directly to the **Amazon SNS Topic** (`${EnvironmentName}-ops
   2. Connect to the failing instance via SSM and examine `/var/log/cloud-init-output.log` and `docker logs`.
 
 ### Issue 3: High Database Storage Usage
-- **Cause:** Accumulation of binary logs or large transaction logs.
+- **Cause:** Accumulation of WAL logs or large database tables.
 - **Remediation:**
   1. Check disk utilization: `df -h`.
-  2. In MySQL/MariaDB: `PURGE BINARY LOGS BEFORE NOW() - INTERVAL 7 DAY;`.
+  2. In PostgreSQL: Run `VACUUM FULL;` or adjust WAL retention settings.
   3. If storage resize is necessary, update `DBVolumeSize` in `environments/prod.json` and redeploy CloudFormation.

@@ -58,7 +58,7 @@ flowchart TD
             end
 
             subgraph DB_Tier ["Database Tier (Private Subnet AZ1)"]
-                DB_EC2["Dedicated EC2 Server<br/>MySQL 8.0 (Port 3306)"]
+                DB_EC2["Dedicated EC2 Server<br/>PostgreSQL 16 (Port 5432)"]
             end
         end
     end
@@ -75,7 +75,7 @@ flowchart TD
     Users --> Domain --> CF
     CF -->|Dynamic requests| ALB
     ALB --> TG --> ASG
-    ASG -->|SQL Queries (Port 3306)| DB_EC2
+    ASG -->|SQL Queries (Port 5432)| DB_EC2
     ASG -.->|Logs| CW_Logs
     ASG -.->|Metrics| CW_Alarms
     DB_EC2 -.->|Metrics| CW_Alarms
@@ -89,7 +89,7 @@ flowchart TD
 - **CloudFront CDN Edge Caching:** Optimized caching for static assets (`/_next/static/*`, `/static/*`), offloading 80–90% of requests from origin servers, lowering TTFB, and accelerating global page load times.
 - **Application Load Balancer (ALB):** Spans Multi-AZ Public Subnets, balancing HTTP/HTTPS traffic with health checking on `/api/health`.
 - **Web Auto Scaling Group (ASG):** Resides securely within **Private Subnets (AZ1 & AZ2)**, automatically scaling EC2 instances based on CPU utilization (70% target tracking).
-- **Dedicated MySQL/MariaDB EC2:** Located in a **Private Subnet**, protected by a dedicated Security Group that only permits inbound port 3306 traffic from the Web Security Group.
+- **Dedicated PostgreSQL 16 EC2:** Located in a **Private Subnet**, protected by a dedicated Security Group that only permits inbound port 5432 traffic from the Web Security Group.
 - **Zero-Downtime Rolling Update:** Integrated `aws autoscaling start-instance-refresh` in CI/CD updates web container versions without impacting the database tier or interrupting user service.
 - **Multi-Tier Monitoring & Alerts:** CloudWatch Alarms (ALB 5XX, Web CPU, and DB CPU) notify via Amazon SNS Topic; log retention auto-expires after 14 days (Dev) / 30 days (Prod).
 - **AWS-Native Custom Domain:** Directs user traffic via DNS CNAME (DNS-only) directly to Amazon CloudFront Edge & ALB endpoints.
@@ -110,7 +110,7 @@ flowchart TD
 - **Application:** Next.js Dashboard & Management Platform.
 - **Frontend Stack:** React 18, Next.js App Router, Tailwind CSS, Lucide Icons.
 - **Backend & API:** Node.js Next.js Server Components and REST routes.
-- **Database:** Dedicated MariaDB 10.5 / MySQL running on an isolated EC2 server in a Private Subnet.
+- **Database:** Dedicated PostgreSQL 16 running on an isolated EC2 server in a Private Subnet.
 
 ### 2. Separation of Build and Deployment (Build Once, Deploy Everywhere)
 1. **Multi-Stage Docker Build:**

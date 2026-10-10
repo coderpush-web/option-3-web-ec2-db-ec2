@@ -4,7 +4,6 @@ import bcrypt from 'bcrypt';
 import { z } from 'zod';
 import type { User } from '@/app/lib/definitions';
 import { authConfig } from './auth.config';
-import { users as placeholderUsers } from '@/app/lib/placeholder-data';
 import { sqlClient } from '@/app/lib/db';
 
 async function getUser(email: string): Promise<User | undefined> {
@@ -14,17 +13,7 @@ async function getUser(email: string): Promise<User | undefined> {
       if (user && user.length > 0) return user[0];
     }
   } catch (error) {
-    // Database might be connecting or offline, fallback to placeholder
-  }
-
-  const found = placeholderUsers.find((u) => u.email === email);
-  if (found) {
-    return {
-      id: found.id,
-      name: found.name,
-      email: found.email,
-      password: await bcrypt.hash(found.password, 10),
-    };
+    console.error('Failed to query user from database:', error);
   }
   return undefined;
 }

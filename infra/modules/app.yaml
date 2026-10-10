@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Application Compute Module: Option 3 - Auto Scaling EC2 Web (ALB + ASG) + Dedicated Single EC2 MariaDB'
+Description: 'Application Compute Module: Option 3 - Auto Scaling EC2 Web (ALB + ASG) + Dedicated Single EC2 PostgreSQL 16'
 
 Parameters:
   EnvironmentName:
@@ -95,8 +95,8 @@ Resources:
   DBSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: !Sub '${EnvironmentName}-ec2-mariadb-credentials'
-      Description: !Sub 'EC2 MariaDB credentials for ${EnvironmentName}'
+      Name: !Sub '${EnvironmentName}-ec2-postgres-credentials'
+      Description: !Sub 'EC2 PostgreSQL credentials for ${EnvironmentName}'
       GenerateSecretString:
         SecretStringTemplate: '{"username": "appuser"}'
         GenerateStringKey: password
@@ -105,6 +105,22 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub '${EnvironmentName}-db-secret'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  WebAuthSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${EnvironmentName}-web-auth-secret'
+      Description: !Sub 'NextAuth session encryption key for ${EnvironmentName} web app'
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: 'auth_secret'
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\\'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-web-auth-secret'
         - Key: Environment
           Value: !Ref EnvironmentName
 
@@ -129,30 +145,61 @@ Resources:
             VolumeSize: !Ref DBVolumeSize
             VolumeType: gp3
             Encrypted: true
-            DeleteOnTermination: true
+            DeleteOnTermination: false
       UserData:
         Fn::Base64: !Sub
           - |
             #!/bin/bash
             set -e
-            dnf install -y mariadb105-server aws-cli
+            dnf install -y postgresql16-server postgresql16 aws-cli openssl
 
             echo "Fetching database credentials from AWS Secrets Manager..."
             SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "${DBSecretId}" --region "${AWS::Region}" --query SecretString --output text)
             DB_USER=$(echo "$SECRET_JSON" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['username'])")
             DB_PASS=$(echo "$SECRET_JSON" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['password'])")
 
-            sed -i 's/^bind-address.*/bind-address = 0.0.0.0/' /etc/my.cnf.d/mariadb-server.cnf 2>/dev/null || true
-            systemctl enable mariadb
-            systemctl start mariadb
+            postgresql-setup --initdb || true
 
-            mysql -e "CREATE DATABASE IF NOT EXISTS appdb;"
-            mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'%' IDENTIFIED BY '$DB_PASS';"
-            mysql -e "GRANT ALL PRIVILEGES ON appdb.* TO '$DB_USER'@'%';"
-            mysql -e "FLUSH PRIVILEGES;"
+            # Generate TLS self-signed certificates for encrypted PostgreSQL connections
+            openssl req -new -x509 -days 3650 -nodes -text \
+              -out /var/lib/pgsql/data/server.crt \
+              -keyout /var/lib/pgsql/data/server.key \
+              -subj "/CN=db.internal"
+            chmod 600 /var/lib/pgsql/data/server.key
+            chown postgres:postgres /var/lib/pgsql/data/server.crt /var/lib/pgsql/data/server.key
 
-            mysql -u "$DB_USER" -p"$DB_PASS" appdb -e "CREATE TABLE IF NOT EXISTS system_logs (id INT AUTO_INCREMENT PRIMARY KEY, service VARCHAR(50), message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
-            mysql -u "$DB_USER" -p"$DB_PASS" appdb -e "INSERT INTO system_logs (service, message) VALUES ('Database', 'Database Initialized on Dedicated EC2 Instance');"
+            # Configure postgresql.conf with SSL enabled and SCRAM-SHA-256 password encryption
+            sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" /var/lib/pgsql/data/postgresql.conf || true
+            cat << 'EOF' >> /var/lib/pgsql/data/postgresql.conf
+            ssl = on
+            ssl_cert_file = 'server.crt'
+            ssl_key_file = 'server.key'
+            password_encryption = scram-sha-256
+            EOF
+
+            # Enforce mandatory hostssl with scram-sha-256 authentication in pg_hba.conf
+            echo "hostssl all all 0.0.0.0/0 scram-sha-256" >> /var/lib/pgsql/data/pg_hba.conf
+
+            systemctl enable postgresql
+            systemctl start postgresql
+
+            # Execute PostgreSQL role and database provisioning securely via stdin
+            sudo -u postgres psql -v ON_ERROR_STOP=0 << EOF
+            DO \$\$
+            BEGIN
+              IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$DB_USER') THEN
+                EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L', '$DB_USER', '$DB_PASS');
+              ELSE
+                EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', '$DB_USER', '$DB_PASS');
+              END IF;
+            END
+            \$\$;
+            CREATE DATABASE appdb OWNER "$DB_USER";
+            GRANT ALL PRIVILEGES ON DATABASE appdb TO "$DB_USER";
+            EOF
+
+            # Restrict cloud-init logs containing potential bootstrap output
+            chmod 600 /var/log/cloud-init-output.log || true
           - DBSecretId: !Ref DBSecret
       Tags:
         - Key: Name
@@ -221,8 +268,26 @@ Resources:
                 Protocol: HTTPS
                 Port: '443'
                 StatusCode: HTTP_301
-          - - Type: forward
-              TargetGroupArn: !Ref ALBTargetGroup
+          - - Type: fixed-response
+              FixedResponseConfig:
+                StatusCode: '403'
+                ContentType: 'text/plain'
+                MessageBody: 'Direct access to ALB is forbidden. Please access via CloudFront distribution.'
+
+  ALBHeaderRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 10
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig:
+            HttpHeaderName: 'X-CloudFront-Origin-Verify'
+            Values:
+              - !Sub '${EnvironmentName}-secure-origin-${AWS::AccountId}'
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
 
   ALBHttpsListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -235,6 +300,25 @@ Resources:
       Certificates:
         - CertificateArn: !Ref CertificateArn
       DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: 'text/plain'
+            MessageBody: 'Direct access to ALB is forbidden. Please access via CloudFront distribution.'
+
+  ALBHttpsHeaderRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: HasCertificateArn
+    Properties:
+      ListenerArn: !Ref ALBHttpsListener
+      Priority: 10
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig:
+            HttpHeaderName: 'X-CloudFront-Origin-Verify'
+            Values:
+              - !Sub '${EnvironmentName}-secure-origin-${AWS::AccountId}'
+      Actions:
         - Type: forward
           TargetGroupArn: !Ref ALBTargetGroup
 
@@ -290,10 +374,19 @@ Resources:
               DB_USER=$(echo "$SECRET_JSON" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['username'])")
               DB_PASS=$(echo "$SECRET_JSON" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['password'])")
 
+              echo "Fetching application NextAuth secret from AWS Secrets Manager..."
+              AUTH_SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "${WebAuthSecretId}" --region "${AWS::Region}" --query SecretString --output text 2>/dev/null || true)
+              AUTH_SECRET=$(echo "$AUTH_SECRET_JSON" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('auth_secret', ''))" 2>/dev/null || echo "$AUTH_SECRET_JSON")
+
               cat << EOF > /etc/react-webapp.env
               APP_ENV=${EnvironmentName}
               PORT=80
+              AUTH_SECRET=$AUTH_SECRET
+              AUTH_URL=http://localhost:3000
+              POSTGRES_URL=postgres://$DB_USER:$DB_PASS@${DBPrivateIp}:5432/appdb?sslmode=require
+              DATABASE_URL=postgres://$DB_USER:$DB_PASS@${DBPrivateIp}:5432/appdb?sslmode=require
               DB_HOST=${DBPrivateIp}
+              DB_PORT=5432
               DB_USER=$DB_USER
               DB_PASSWORD=$DB_PASS
               DB_NAME=appdb
@@ -302,7 +395,7 @@ Resources:
 
               cat << 'SVC' > /etc/systemd/system/react-webapp.service
               [Unit]
-              Description=Dockerized React Web App connected to EC2 MariaDB
+              Description=Dockerized React Web App connected to EC2 PostgreSQL
               After=docker.service
               Requires=docker.service
 
@@ -329,6 +422,7 @@ Resources:
               systemctl start react-webapp || true
             - DBPrivateIp: !GetAtt DBServerInstance.PrivateIp
               DBSecretId: !Ref DBSecret
+              WebAuthSecretId: !Ref WebAuthSecret
         TagSpecifications:
           - ResourceType: instance
             Tags:
@@ -384,7 +478,7 @@ Resources:
         Comment: !Sub '${EnvironmentName} Option 3 Web Distribution'
         Enabled: true
         HttpVersion: http2and3
-        PriceClass: PriceClass_All
+        PriceClass: PriceClass_200
         Origins:
           - Id: ALBOrigin
             DomainName: !GetAtt ApplicationLoadBalancer.DNSName
@@ -546,6 +640,8 @@ Outputs:
     Description: Ops Monitoring Alert SNS Topic ARN
     Value: !Ref OpsAlertTopic
   DBSecretArn:
-    Description: AWS Secrets Manager ARN for EC2 MariaDB Credentials
+    Description: AWS Secrets Manager ARN for EC2 PostgreSQL Credentials
     Value: !Ref DBSecret
-
+  WebAuthSecretArn:
+    Description: AWS Secrets Manager ARN for Web NextAuth Secret
+    Value: !Ref WebAuthSecret

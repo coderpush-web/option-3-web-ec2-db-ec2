@@ -1,9 +1,10 @@
-import postgres from 'postgres';
-
-const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+import { sqlClient } from '@/app/lib/db';
 
 async function listInvoices() {
-  const data = await sql`
+  if (!sqlClient) {
+    throw new Error('Database client not configured');
+  }
+  const data = await sqlClient`
     SELECT invoices.amount, customers.name
     FROM invoices
     JOIN customers ON invoices.customer_id = customers.id
@@ -18,6 +19,13 @@ export async function GET() {
     return Response.json(
       { message: 'Query endpoint is disabled in production' },
       { status: 403 }
+    );
+  }
+
+  if (!sqlClient) {
+    return Response.json(
+      { message: 'Database connection not configured (POSTGRES_URL / DATABASE_URL missing)' },
+      { status: 503 }
     );
   }
 
