@@ -19,11 +19,6 @@ Parameters:
     Type: Number
     Default: 30
 
-  DBPassword:
-    Type: String
-    NoEcho: true
-    Default: SecretDBPass123!
-
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
@@ -53,14 +48,39 @@ Parameters:
 
   CertificateArn:
     Type: String
-    Default: 'arn:aws:acm:ap-southeast-1:649519997247:certificate/3565f62c-9fd6-4aec-bb6a-5182e3337479'
+    Default: ''
     Description: ACM Certificate ARN for HTTPS ALB listener (*.png261.dev)
+
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Optional email address to receive CloudWatch Alarms SNS notifications
 
 Conditions:
   IsProd: !Equals [!Ref EnvironmentName, 'prod']
   HasCertificateArn: !Not [!Equals [!Ref CertificateArn, '']]
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
 
 Resources:
+  OpsAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${EnvironmentName}-opt3-ops-alerts'
+      DisplayName: !Sub '${EnvironmentName} Option 3 Ops Alerts'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-opt3-ops-alert-topic'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  OpsAlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref OpsAlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
   AppLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -102,6 +122,22 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${EnvironmentName}-ec2-mariadb-credentials'
+      Description: !Sub 'EC2 MariaDB credentials for ${EnvironmentName}'
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "appuser"}'
+        GenerateStringKey: password
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\\ '
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-db-secret'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   DBServerInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -129,20 +165,25 @@ Resources:
           - |
             #!/bin/bash
             set -e
-            dnf install -y mariadb105-server
+            dnf install -y mariadb105-server aws-cli
+
+            echo "Fetching database credentials from AWS Secrets Manager..."
+            SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "${DBSecretId}" --region "${AWS::Region}" --query SecretString --output text)
+            DB_USER=$(echo "$SECRET_JSON" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['username'])")
+            DB_PASS=$(echo "$SECRET_JSON" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['password'])")
 
             sed -i 's/^bind-address.*/bind-address = 0.0.0.0/' /etc/my.cnf.d/mariadb-server.cnf 2>/dev/null || true
             systemctl enable mariadb
             systemctl start mariadb
 
             mysql -e "CREATE DATABASE IF NOT EXISTS appdb;"
-            mysql -e "CREATE USER IF NOT EXISTS 'appuser'@'%' IDENTIFIED BY '${Password}';"
-            mysql -e "GRANT ALL PRIVILEGES ON appdb.* TO 'appuser'@'%';"
+            mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'%' IDENTIFIED BY '$DB_PASS';"
+            mysql -e "GRANT ALL PRIVILEGES ON appdb.* TO '$DB_USER'@'%';"
             mysql -e "FLUSH PRIVILEGES;"
 
-            mysql -u appuser -p'${Password}' appdb -e "CREATE TABLE IF NOT EXISTS system_logs (id INT AUTO_INCREMENT PRIMARY KEY, service VARCHAR(50), message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
-            mysql -u appuser -p'${Password}' appdb -e "INSERT INTO system_logs (service, message) VALUES ('Database', 'Database Initialized on Dedicated EC2 Instance');"
-          - Password: !Ref DBPassword
+            mysql -u "$DB_USER" -p"$DB_PASS" appdb -e "CREATE TABLE IF NOT EXISTS system_logs (id INT AUTO_INCREMENT PRIMARY KEY, service VARCHAR(50), message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+            mysql -u "$DB_USER" -p"$DB_PASS" appdb -e "INSERT INTO system_logs (service, message) VALUES ('Database', 'Database Initialized on Dedicated EC2 Instance');"
+          - DBSecretId: !Ref DBSecret
       Tags:
         - Key: Name
           Value: !Sub '${EnvironmentName}-db-server'
@@ -175,15 +216,15 @@ Resources:
       VpcId:
         Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
       TargetType: instance
-      HealthCheckPath: /login
+      HealthCheckPath: /api/health
       HealthCheckPort: '80'
       HealthCheckProtocol: HTTP
-      HealthCheckIntervalSeconds: 30
+      HealthCheckIntervalSeconds: 15
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 3
       Matcher:
-        HttpCode: 200-399
+        HttpCode: '200'
       TargetGroupAttributes:
         - Key: deregistration_delay.timeout_seconds
           Value: '30'
@@ -271,6 +312,21 @@ Resources:
                 docker pull "$IMAGE_URI" && break || sleep 5
               done
 
+              echo "Fetching database credentials from AWS Secrets Manager..."
+              SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "${DBSecretId}" --region "${AWS::Region}" --query SecretString --output text)
+              DB_USER=$(echo "$SECRET_JSON" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['username'])")
+              DB_PASS=$(echo "$SECRET_JSON" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['password'])")
+
+              cat << EOF > /etc/react-webapp.env
+              APP_ENV=${EnvironmentName}
+              PORT=80
+              DB_HOST=${DBPrivateIp}
+              DB_USER=$DB_USER
+              DB_PASSWORD=$DB_PASS
+              DB_NAME=appdb
+              EOF
+              chmod 600 /etc/react-webapp.env
+
               cat << 'SVC' > /etc/systemd/system/react-webapp.service
               [Unit]
               Description=Dockerized React Web App connected to EC2 MariaDB
@@ -283,16 +339,11 @@ Resources:
               ExecStartPre=-/usr/bin/docker stop react-webapp
               ExecStartPre=-/usr/bin/docker rm react-webapp
               ExecStart=/usr/bin/docker run --name react-webapp -p 80:80 \
+                --env-file /etc/react-webapp.env \
                 --log-driver=awslogs \
                 --log-opt awslogs-region=${AWS::Region} \
                 --log-opt awslogs-group=/aws/ec2/${EnvironmentName}-option-3-webapp \
                 --log-opt awslogs-create-group=true \
-                -e APP_ENV=${EnvironmentName} \
-                -e PORT=80 \
-                -e DB_HOST=${DBPrivateIp} \
-                -e DB_USER=appuser \
-                -e DB_PASSWORD=${Password} \
-                -e DB_NAME=appdb \
                 ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvironmentName}-option-3-web-app:${ImageTag}
               ExecStop=/usr/bin/docker stop react-webapp
 
@@ -304,7 +355,7 @@ Resources:
               systemctl enable react-webapp
               systemctl start react-webapp || true
             - DBPrivateIp: !GetAtt DBServerInstance.PrivateIp
-              Password: !Ref DBPassword
+              DBSecretId: !Ref DBSecret
         TagSpecifications:
           - ResourceType: instance
             Tags:
@@ -430,6 +481,10 @@ Resources:
       EvaluationPeriods: 1
       Threshold: 10
       ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref OpsAlertTopic
+      OKActions:
+        - !Ref OpsAlertTopic
       Dimensions:
         - Name: LoadBalancer
           Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
@@ -447,6 +502,10 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 85
       ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref OpsAlertTopic
+      OKActions:
+        - !Ref OpsAlertTopic
       Dimensions:
         - Name: AutoScalingGroupName
           Value: !Ref WebAutoScalingGroup
@@ -462,6 +521,10 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 85
       ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref OpsAlertTopic
+      OKActions:
+        - !Ref OpsAlertTopic
       Dimensions:
         - Name: InstanceId
           Value: !Ref DBServerInstance
@@ -503,4 +566,10 @@ Outputs:
   DNSSetupGuide:
     Description: Custom Domain DNS Setup Instructions
     Value: !Sub 'Add CNAME in DNS: ${SubdomainName} -> ${CloudFrontDistribution.DomainName} (DNS-only / no proxy).'
+  OpsAlertTopicArn:
+    Description: Ops Monitoring Alert SNS Topic ARN
+    Value: !Ref OpsAlertTopic
+  DBSecretArn:
+    Description: AWS Secrets Manager ARN for EC2 MariaDB Credentials
+    Value: !Ref DBSecret
 

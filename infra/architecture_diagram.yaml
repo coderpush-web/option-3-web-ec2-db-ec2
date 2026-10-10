@@ -36,10 +36,20 @@ Diagram:
       Children:
         - VPC
         - ECR
+        - CloudWatch
+        - SNS
 
     ECR:
       Type: AWS::ECR
       Title: "Amazon ECR\n(App Image Repository)"
+
+    CloudWatch:
+      Type: AWS::CloudWatch
+      Title: "Amazon CloudWatch\n(Logs & Alarms)"
+
+    SNS:
+      Type: AWS::SNS::Topic
+      Title: "Amazon SNS\n(Ops Alerts)"
 
     VPC:
       Type: AWS::EC2::VPC
@@ -62,7 +72,7 @@ Diagram:
     ALB:
       Type: AWS::ElasticLoadBalancingV2::LoadBalancer
       Preset: Application Load Balancer
-      Title: "Application Load Balancer"
+      Title: "Application Load Balancer\n(/api/health)"
 
     MainStack:
       Type: AWS::Diagram::HorizontalStack
@@ -109,7 +119,7 @@ Diagram:
 
     DBInstance:
       Type: AWS::EC2::Instance
-      Title: "Dedicated MariaDB"
+      Title: "Dedicated MySQL 8.0"
 
     VPCEndpoints:
       Type: AWS::EC2::VPCEndpoint
@@ -209,3 +219,23 @@ Diagram:
       Labels:
         SourceRight:
           Title: "Pull Image"
+    - Source: WebASG
+      SourcePosition: E
+      Target: CloudWatch
+      TargetPosition: W
+      TargetArrowHead:
+        Type: Open
+      Type: orthogonal
+      Labels:
+        SourceRight:
+          Title: "Logs & Alarms"
+    - Source: CloudWatch
+      SourcePosition: E
+      Target: SNS
+      TargetPosition: W
+      TargetArrowHead:
+        Type: Open
+      Type: orthogonal
+      Labels:
+        SourceRight:
+          Title: "Notify"
