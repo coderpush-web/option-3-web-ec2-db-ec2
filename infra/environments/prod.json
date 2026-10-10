@@ -6,6 +6,9 @@
     "DBVolumeSize": "50",
     "DBPassword": "ProdSecretDBPass123!Secure",
     "DomainName": "png261.dev",
-    "SubdomainName": "opt3.png261.dev"
+    "SubdomainName": "opt3.png261.dev",
+    "MinInstances": "2",
+    "MaxInstances": "6",
+    "DesiredInstances": "2"
   }
 }
