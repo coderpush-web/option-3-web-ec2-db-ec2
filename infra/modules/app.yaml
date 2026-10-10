@@ -32,10 +32,6 @@ Parameters:
     Type: String
     Default: latest
 
-  DomainName:
-    Type: String
-    Default: png261.dev
-
   SubdomainName:
     Type: String
     Default: opt3-dev.png261.dev
@@ -434,11 +430,8 @@ Outputs:
     Description: Private IP of Dedicated DB Server
     Value: !GetAtt DBServerInstance.PrivateIp
   CustomDomainURL:
-    Description: Custom Domain Website URL (png261.dev)
+    Description: Custom Domain Website URL
     Value: !Sub 'https://${SubdomainName}'
-  RootDomain:
-    Description: Root Domain Name
-    Value: !Ref DomainName
   DnsRecordType:
     Description: DNS Record Type
     Value: 'CNAME'
