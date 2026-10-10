@@ -50,9 +50,19 @@ Diagram:
     PublicSubnetALB:
       Type: AWS::EC2::Subnet
       Preset: PublicSubnet
-      Title: "Public Subnets (ALB Tier)"
+      Title: "Public Subnets (ALB & NAT Tier)"
       Children:
         - ALB
+        - NATGW
+
+    ALB:
+      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+      Preset: Application Load Balancer
+      Title: "Application Load Balancer"
+
+    NATGW:
+      Type: AWS::EC2::NatGateway
+      Title: "NAT Gateway (Egress)"
 
     MainStack:
       Type: AWS::Diagram::HorizontalStack
@@ -99,11 +109,6 @@ Diagram:
     DBInstance:
       Type: AWS::EC2::Instance
       Title: "Dedicated MariaDB"
-
-    ALB:
-      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-      Preset: Application Load Balancer
-      Title: "Application Load Balancer"
 
     IGW:
       Type: AWS::EC2::InternetGateway
@@ -179,3 +184,13 @@ Diagram:
       TargetArrowHead:
         Type: Open
       Type: orthogonal
+    - Source: WebInstance1
+      SourcePosition: NW
+      Target: NATGW
+      TargetPosition: S
+      TargetArrowHead:
+        Type: Open
+      Type: orthogonal
+      Labels:
+        SourceLeft:
+          Title: "Egress"
