@@ -27,7 +27,7 @@ Hạ tầng và Mã nguồn ứng dụng độc lập cho **Option 3: 1 EC2 Web 
 
 <!-- INFRACOST_START -->
 ### 💵 Kết quả Kiểm tra Chi phí Tự động CloudFormation (Infracost CI/CD Output)
-*Thời gian kiểm tra: Sat Oct 10 03:12:36 UTC 2026*
+*Thời gian kiểm tra: Sat Oct 10 03:23:48 UTC 2026*
 
 ```text
 No costed resources detected.
