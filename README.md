@@ -16,13 +16,28 @@ Independent infrastructure and application source code for **Option 3: Multi-Tie
 
 ## 2. Cost Analysis
 
-### A. Cost by Purchasing Option (Singapore Region: `ap-southeast-1`)
-| Purchasing Model | Web Tier Compute | DB Tier Compute | Storage & IP | Total Monthly Cost | Approx. Local Currency (VND) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **On-Demand (Default)** | $15.18 / mo | $15.18 / mo | $11.25 / mo | **$41.61 / mo** | ~1,050,000 VND |
-| **1-Year Reserved / Savings Plan** | $9.56 / mo | $9.56 / mo | $11.25 / mo | **$30.37 / mo** *(27% savings)* | ~765,000 VND |
-| **3-Year Reserved / Savings Plan** | $6.06 / mo | $6.06 / mo | $11.25 / mo | **$23.37 / mo** *(44% savings)* | ~589,000 VND |
-| **Hybrid (Web Spot + DB 1-Year RI)**| $4.53 / mo | $9.56 / mo | $11.25 / mo | **$25.34 / mo** *(39% savings)* | ~639,000 VND |
+> 💡 **Verified via Infracost CLI:** Cost calculations derived directly from CloudFormation templates using `infracost scan ./infra/modules`.
+
+### A. Component Cost Breakdown (Infracost CLI Verified)
+| CloudFormation Module / Component | AWS Resource Type | Monthly Cost (USD) | Notes |
+| :--- | :--- | :--- | :--- |
+| **Application Load Balancer (ALB)** | `AWS::ElasticLoadBalancingV2::LoadBalancer` | **$16.43** | Multi-AZ load balancing and health checks |
+| **Dedicated DB EC2 Server** | `AWS::EC2::Instance` (`t3.micro` + 30GB EBS) | **$10.49** | Isolated compute & persistent storage for PostgreSQL |
+| **Web Compute (Auto Scaling Group)** | `AWS::AutoScaling::AutoScalingGroup` (`t3.micro`) | **$9.49** | Stateless web application compute |
+| **Secrets & Operational Monitoring** | `SecretsManager`, `CloudWatch`, `SNS` | **$0.30** | Dual secrets (DB + App) and multi-tier alarms |
+| **Subtotal (Decoupled 2-Tier Application)** | `infra/modules/app.yaml` | **$36.71 / mo** | ~930,000 VND / month |
+| **Private VPC Interface Endpoints (Optional)** | `AWS::EC2::VPCEndpoint` (7 endpoints) | **$102.20** | SSM, ECR, CloudWatch Logs in Private Subnets |
+| **Total (Full Enterprise Isolated Architecture)** | `infra/modules/` | **$138.91 / mo** | ~3,515,000 VND / month |
+
+### B. Cost by Purchasing Option & Architecture Mode
+| Purchasing Model / Mode | Web Compute | DB Compute + EBS | ALB & Support | Total (Lean Mode)* | Total (Full Isolated) | Approx. Local Currency (Lean) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **On-Demand (Default)** | $9.49 | $10.49 | $16.73 | **$36.71 / mo** | **$138.91 / mo** | ~930,000 VND |
+| **1-Year Savings Plan / RI** | $5.98 | $6.98 | $16.73 | **$29.69 / mo** *(19% off)* | **$131.89 / mo** | ~752,000 VND |
+| **3-Year Savings Plan / RI** | $3.79 | $4.79 | $16.73 | **$25.31 / mo** *(31% off)* | **$127.51 / mo** | ~641,000 VND |
+| **Hybrid (Web Spot + DB 1-Yr RI)** | $2.84 | $6.98 | $16.73 | **$26.55 / mo** *(28% off)* | **$128.75 / mo** | ~673,000 VND |
+
+*\*Lean Mode: Compute + ALB + CloudFront routing without dedicated VPC Interface Endpoints ($102.20/mo).*
 
 ## 3. Disaster Recovery & Recovery Time (MTTR)
 
