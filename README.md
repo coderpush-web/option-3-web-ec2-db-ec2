@@ -1,6 +1,6 @@
 # Option 3: 1 EC2 Web ASG + 1 EC2 Dedicated DB Separated
 
-Independent infrastructure and application source code for **Option 3: Multi-Tier Architecture with Auto Scaling Web EC2 and Dedicated Database EC2**.
+Independent infrastructure and application source code for **Option 3: Multi-Tier Architecture with Auto Scaling Web EC2, Dedicated Database EC2, and AWS NAT Gateway**.
 
 ## 1. Architecture Overview
 ![Architecture](infra/architecture_diagram.png)
@@ -8,6 +8,7 @@ Independent infrastructure and application source code for **Option 3: Multi-Tie
 ### Key Architectural Highlights:
 - **CloudFront CDN Edge Caching:** Optimized caching for static assets (`/_next/static/*`, `/static/*`), offloading 80–90% of requests from origin servers, lowering TTFB, and accelerating global page load times.
 - **Application Load Balancer (ALB):** Spans Multi-AZ Public Subnets, balancing HTTP/HTTPS traffic with health checking on `/api/health`.
+- **AWS NAT Gateway:** Located in the Public Subnet with Elastic IP, allowing private web and database instances to safely access external resources and AWS APIs without exposing ports.
 - **Web Auto Scaling Group (ASG):** Resides securely within **Private Subnets (AZ1 & AZ2)**, automatically scaling EC2 instances based on CPU utilization (70% target tracking).
 - **Dedicated PostgreSQL 16 EC2:** Located in a **Private Subnet**, protected by a dedicated Security Group that only permits inbound port 5432 traffic from the Web Security Group.
 - **Zero-Downtime Rolling Update:** Integrated `aws autoscaling start-instance-refresh` in CI/CD updates web container versions without impacting the database tier or interrupting user service.
@@ -21,23 +22,22 @@ Independent infrastructure and application source code for **Option 3: Multi-Tie
 ### A. Component Cost Breakdown (Infracost CLI Verified)
 | CloudFormation Module / Component | AWS Resource Type | Monthly Cost (USD) | Notes |
 | :--- | :--- | :--- | :--- |
+| **AWS NAT Gateway** | `AWS::EC2::NatGateway` | **$32.85** | Managed NAT Gateway in Public Subnet (0.0.0.0/0 egress) |
 | **Application Load Balancer (ALB)** | `AWS::ElasticLoadBalancingV2::LoadBalancer` | **$16.43** | Multi-AZ load balancing and health checks |
 | **Dedicated DB EC2 Server** | `AWS::EC2::Instance` (`t3.micro` + 30GB EBS) | **$10.49** | Isolated compute & persistent storage for PostgreSQL |
-| **Web Compute (Auto Scaling Group)** | `AWS::AutoScaling::AutoScalingGroup` (`t3.micro`) | **$9.49** | Stateless web application compute |
+| **Web Compute (Auto Scaling Group)** | `AWS::AutoScaling::AutoScalingGroup` (`t3.micro`) | **$9.49** | Stateless web application compute tier |
 | **Secrets & Operational Monitoring** | `SecretsManager`, `CloudWatch`, `SNS` | **$0.30** | Dual secrets (DB + App) and multi-tier alarms |
-| **Subtotal (Decoupled 2-Tier Application)** | `infra/modules/app.yaml` | **$36.71 / mo** | ~930,000 VND / month |
-| **Private VPC Interface Endpoints (Optional)** | `AWS::EC2::VPCEndpoint` (7 endpoints) | **$102.20** | SSM, ECR, CloudWatch Logs in Private Subnets |
-| **Total (Full Enterprise Isolated Architecture)** | `infra/modules/` | **$138.91 / mo** | ~3,515,000 VND / month |
+| **Total Monthly Cost** | `infra/modules/` | **$69.56 / mo** | ~1,760,000 VND / month |
 
-### B. Cost by Purchasing Option & Architecture Mode
-| Purchasing Model / Mode | Web Compute | DB Compute + EBS | ALB & Support | Total (Lean Mode)* | Total (Full Isolated) | Approx. Local Currency (Lean) |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **On-Demand (Default)** | $9.49 | $10.49 | $16.73 | **$36.71 / mo** | **$138.91 / mo** | ~930,000 VND |
-| **1-Year Savings Plan / RI** | $5.98 | $6.98 | $16.73 | **$29.69 / mo** *(19% off)* | **$131.89 / mo** | ~752,000 VND |
-| **3-Year Savings Plan / RI** | $3.79 | $4.79 | $16.73 | **$25.31 / mo** *(31% off)* | **$127.51 / mo** | ~641,000 VND |
-| **Hybrid (Web Spot + DB 1-Yr RI)** | $2.84 | $6.98 | $16.73 | **$26.55 / mo** *(28% off)* | **$128.75 / mo** | ~673,000 VND |
+*(Tiết kiệm **$69.35 / tháng** so với mô hình cũ sử dụng 7 VPC Interface Endpoints $102.20/tháng).*
 
-*\*Lean Mode: Compute + ALB + CloudFront routing without dedicated VPC Interface Endpoints ($102.20/mo).*
+### B. Cost by Purchasing Option & Commitment
+| Purchasing Model | Web Compute | DB Compute + EBS | NAT Gateway & ALB | Total Monthly Cost | Approx. Local Currency (VND) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **On-Demand (Default)** | $9.49 | $10.49 | $49.58 | **$69.56 / mo** | ~1,760,000 VND |
+| **1-Year Savings Plan / RI** | $5.98 | $6.98 | $49.58 | **$62.54 / mo** *(10% savings)* | ~1,580,000 VND |
+| **3-Year Savings Plan / RI** | $3.79 | $4.79 | $49.58 | **$58.16 / mo** *(16% savings)* | ~1,470,000 VND |
+| **Hybrid (Web Spot + DB 1-Yr RI)** | $2.84 | $6.98 | $49.58 | **$59.40 / mo** *(15% savings)* | ~1,500,000 VND |
 
 ## 3. Disaster Recovery & Recovery Time (MTTR)
 
