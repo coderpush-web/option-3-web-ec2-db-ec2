@@ -17,17 +17,17 @@ Independent infrastructure and application source code for **Option 3: Multi-Tie
 | **Dedicated DB EC2 Server** | `AWS::EC2::Instance` (`t3.micro` + 30GB EBS) | **$10.49** | Isolated compute & persistent storage for PostgreSQL |
 | **Web Compute (Auto Scaling Group)** | `AWS::AutoScaling::AutoScalingGroup` (`t3.micro`) | **$9.49** | Stateless web application compute tier |
 | **Secrets & Operational Monitoring** | `SecretsManager`, `CloudWatch`, `SNS` | **$0.30** | Dual secrets (DB + App) and multi-tier alarms |
-| **Total Monthly Cost** | `infra/modules/` | **$69.56 / mo** | ~1,760,000 VND / month |
+| **Total Monthly Cost** | `infra/modules/` | **$69.56 / mo** | Baseline on-demand configuration |
 
 *(Saves **$69.35 / month** compared to the previous 7 VPC Interface Endpoints architecture at $102.20/month).*
 
 ### B. Cost by Purchasing Option & Commitment
-| Purchasing Model | Web Compute | DB Compute + EBS | NAT Gateway & ALB | Total Monthly Cost | Approx. Local Currency (VND) |
+| Purchasing Model | Web Compute | DB Compute + EBS | NAT Gateway & ALB | Total Monthly Cost | Cost Savings vs On-Demand |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **On-Demand (Default)** | $9.49 | $10.49 | $49.58 | **$69.56 / mo** | ~1,760,000 VND |
-| **1-Year Savings Plan / RI** | $5.98 | $6.98 | $49.58 | **$62.54 / mo** *(10% savings)* | ~1,580,000 VND |
-| **3-Year Savings Plan / RI** | $3.79 | $4.79 | $49.58 | **$58.16 / mo** *(16% savings)* | ~1,470,000 VND |
-| **Hybrid (Web Spot + DB 1-Yr RI)** | $2.84 | $6.98 | $49.58 | **$59.40 / mo** *(15% savings)* | ~1,500,000 VND |
+| **On-Demand (Default)** | $9.49 | $10.49 | $49.58 | **$69.56 / mo** | Baseline |
+| **1-Year Savings Plan / RI** | $5.98 | $6.98 | $49.58 | **$62.54 / mo** | 10% savings ($7.02/mo) |
+| **3-Year Savings Plan / RI** | $3.79 | $4.79 | $49.58 | **$58.16 / mo** | 16% savings ($11.40/mo) |
+| **Hybrid (Web Spot + DB 1-Yr RI)** | $2.84 | $6.98 | $49.58 | **$59.40 / mo** | 15% savings ($10.16/mo) |
 
 ## 3. Disaster Recovery & Recovery Time (MTTR)
 
