@@ -5,16 +5,6 @@ Independent infrastructure and application source code for **Option 3: Multi-Tie
 ## 1. Architecture Overview
 ![Architecture](infra/architecture_diagram.png)
 
-### Key Architectural Highlights:
-- **CloudFront CDN Edge Caching:** Optimized caching for static assets (`/_next/static/*`, `/static/*`), offloading 80–90% of requests from origin servers, lowering TTFB, and accelerating global page load times.
-- **Application Load Balancer (ALB):** Spans Multi-AZ Public Subnets, balancing HTTP/HTTPS traffic with health checking on `/api/health`.
-- **AWS NAT Gateway:** Located in the Public Subnet with Elastic IP, allowing private web and database instances to safely access external resources and AWS APIs without exposing ports.
-- **Web Auto Scaling Group (ASG):** Resides securely within **Private Subnets (AZ1 & AZ2)**, automatically scaling EC2 instances based on CPU utilization (70% target tracking).
-- **Dedicated PostgreSQL 16 EC2:** Located in a **Private Subnet**, protected by a dedicated Security Group that only permits inbound port 5432 traffic from the Web Security Group.
-- **Zero-Downtime Rolling Update:** Integrated `aws autoscaling start-instance-refresh` in CI/CD updates web container versions without impacting the database tier or interrupting user service.
-- **Multi-Tier Monitoring & Alerts:** CloudWatch Alarms (ALB 5XX, Web CPU, and DB CPU) notify via Amazon SNS Topic; log retention auto-expires after 14 days (Dev) / 30 days (Prod).
-- **AWS-Native Custom Domain:** Directs user traffic via DNS CNAME (DNS-only) directly to Amazon CloudFront Edge & ALB endpoints.
-
 ## 2. Cost Analysis
 
 > 💡 **Verified via Infracost CLI:** Cost calculations derived directly from CloudFormation templates using `infracost scan ./infra/modules`.
@@ -29,7 +19,7 @@ Independent infrastructure and application source code for **Option 3: Multi-Tie
 | **Secrets & Operational Monitoring** | `SecretsManager`, `CloudWatch`, `SNS` | **$0.30** | Dual secrets (DB + App) and multi-tier alarms |
 | **Total Monthly Cost** | `infra/modules/` | **$69.56 / mo** | ~1,760,000 VND / month |
 
-*(Tiết kiệm **$69.35 / tháng** so với mô hình cũ sử dụng 7 VPC Interface Endpoints $102.20/tháng).*
+*(Saves **$69.35 / month** compared to the previous 7 VPC Interface Endpoints architecture at $102.20/month).*
 
 ### B. Cost by Purchasing Option & Commitment
 | Purchasing Model | Web Compute | DB Compute + EBS | NAT Gateway & ALB | Total Monthly Cost | Approx. Local Currency (VND) |
