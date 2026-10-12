@@ -6,7 +6,8 @@
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
-    "migrate": "node scripts/migrate.js"
+    "migrate": "node scripts/migrate.js",
+    "test": "node test/test_api.js"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
